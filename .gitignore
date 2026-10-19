@@ -31,7 +31,7 @@ dbt/jornada_financeira/.user.yml
 data_generator/temp/
 
 # Anotações pessoais de estudo (não vão para o portfólio)
-resumo_do_dia.md
+resumo_do_dia*.md
 neuro_pipeline_documentacao.md
 
 # Editor e sistema operacional

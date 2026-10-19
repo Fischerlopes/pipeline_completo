@@ -12,6 +12,14 @@ x-airflow-common:
     GCP_CREDENTIALS: ${GCP_CREDENTIALS}
     GCP_BUCKET_RAW: ${GCP_BUCKET_RAW}
     DBT_TARGET: ${DBT_TARGET}
+    # Alerta de falha por e-mail (Gmail)
+    AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+    AIRFLOW__SMTP__SMTP_PORT: 587
+    AIRFLOW__SMTP__SMTP_STARTTLS: 'true'
+    AIRFLOW__SMTP__SMTP_SSL: 'false'
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${SMTP_USER}
+    AIRFLOW_CONN_SMTP_DEFAULT: '{"conn_type": "smtp", "login": "${SMTP_USER}", "password": "${SMTP_PASSWORD}"}'
+    ALERT_EMAIL: ${ALERT_EMAIL}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs

@@ -53,10 +53,11 @@ flowchart LR
     insumos & fretes & ocorrencias & linhas --> dados{{aguardar_dados}}
     dados --> dbt_deps --> dbt_raw --> dbt_staging --> dbt_marts --> dbt_test
     dbt_test --> sucesso[notificar_sucesso] & falha[notificar_falha]
-    sucesso & falha --> fim
 ```
 
 - **Retries:** 2 tentativas com intervalo de 5 minutos por tarefa.
+- **Alerta de falha por e-mail:** se qualquer etapa falhar, a tarefa `notificar_falha` envia um único e-mail por execução com a tarefa que quebrou, o número de tentativas, o link direto para o log e as etapas que deixaram de rodar por causa dela.
+- **Status confiável:** a DAG termina nas próprias tarefas de notificação, então uma falha sempre aparece como `failed` no Airflow — sem tarefa final "sempre verde" mascarando o erro.
 - **Executor:** `LocalExecutor` — simples e suficiente para um ambiente de desenvolvimento.
 
 ---
@@ -167,6 +168,8 @@ docker compose up airflow-init
 docker compose up -d
 ```
 
+Para receber os alertas de falha, preencha `SMTP_USER`, `SMTP_PASSWORD` (uma [senha de app do Google](https://myaccount.google.com/apppasswords)) e `ALERT_EMAIL` no `.env`. Sem eles, o pipeline roda normalmente e registra a falha só no log.
+
 Os pacotes do dbt são instalados pela própria DAG (tarefa `dbt_deps`), nas versões travadas em `package-lock.yml`.
 
 Acesse o Airflow em **http://localhost:8080**, ative a DAG `neuro_pipeline_diario` e dispare uma execução.
@@ -177,6 +180,5 @@ Acesse o Airflow em **http://localhost:8080**, ative a DAG `neuro_pipeline_diari
 
 ## Próximos passos
 
-- Notificação de falha por e-mail/Slack
 - CI com GitHub Actions rodando `dbt build` a cada pull request
 - Dashboard no Looker Studio sobre os marts

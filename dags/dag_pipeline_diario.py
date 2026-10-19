@@ -6,6 +6,7 @@
 #   1. Gera dados novos com Python
 #   2. Envia para o bucket GCP
 #   3. Executa o dbt (raw → staging → marts)
+#   4. Em caso de falha, envia alerta por e-mail
 # ============================================================
 
 from airflow import DAG
@@ -13,15 +14,20 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.trigger_rule import TriggerRule
+from airflow.utils.email import send_email
 from datetime import datetime, timedelta
 import subprocess
 import sys
+import os
 
 # ── Configurações ────────────────────────────────────────────
 
 DBT_PROJECT_DIR = '/opt/airflow/dbt/jornada_financeira'
 DBT_PROFILES_DIR = '/opt/airflow/dbt/jornada_financeira'
 SCRIPTS_DIR = '/opt/airflow/dags/scripts'
+
+# Destinatário do alerta de falha (vazio = alerta só no log)
+ALERT_EMAIL = os.getenv('ALERT_EMAIL')
 
 default_args = {
     'owner': 'neurometric',
@@ -66,12 +72,54 @@ def notificar_sucesso(**context):
 
 
 def notificar_falha(**context):
+    """
+    Envia um único e-mail por execução com as tarefas que falharam
+    e o link do log de cada uma.
+    """
     dag_run = context['dag_run']
-    task = context['task_instance']
+    tarefas = dag_run.get_task_instances()
+
+    # 'failed' = onde o erro aconteceu; 'upstream_failed' = não rodou por causa dele
+    falharam   = [ti for ti in tarefas if ti.state == 'failed']
+    nao_rodaram = [ti.task_id for ti in tarefas if ti.state == 'upstream_failed']
+
     print(f'❌ Pipeline falhou!')
     print(f'   DAG: {dag_run.dag_id}')
-    print(f'   Tarefa: {task.task_id}')
-    print(f'   Execução: {dag_run.execution_date}')
+    print(f'   Execução: {dag_run.run_id}')
+    for ti in falharam:
+        print(f'   Falhou: {ti.task_id} → {ti.log_url}')
+
+    if not ALERT_EMAIL:
+        print('ALERT_EMAIL não configurado — e-mail não enviado.')
+        return
+
+    linhas = ''.join(
+        f'<tr><td><b>{ti.task_id}</b></td>'
+        f'<td>{ti.try_number - 1}</td>'
+        f'<td><a href="{ti.log_url}">ver log</a></td></tr>'
+        for ti in falharam
+    )
+
+    html = f"""
+    <h3>❌ Falha no pipeline <code>{dag_run.dag_id}</code></h3>
+    <p><b>Execução:</b> {dag_run.run_id}<br>
+       <b>Data lógica:</b> {dag_run.logical_date:%d/%m/%Y %H:%M} UTC</p>
+
+    <table border="1" cellpadding="6" cellspacing="0">
+      <tr><th>Tarefa com falha</th><th>Tentativas</th><th>Log</th></tr>
+      {linhas}
+    </table>
+
+    <p><b>Não executadas por causa da falha ({len(nao_rodaram)}):</b>
+       {', '.join(nao_rodaram) or '—'}</p>
+    """
+
+    send_email(
+        to=ALERT_EMAIL,
+        subject=f'[Airflow] Falha em {dag_run.dag_id} — {dag_run.logical_date:%d/%m/%Y}',
+        html_content=html,
+    )
+    print(f'📧 Alerta enviado para {ALERT_EMAIL}')
 
 
 # ── DAG ──────────────────────────────────────────────────────
@@ -215,10 +263,10 @@ with DAG(
         trigger_rule=TriggerRule.ONE_FAILED,
     )
 
-    fim = EmptyOperator(
-        task_id='fim',
-        trigger_rule=TriggerRule.ALL_DONE,
-    )
+    # Sem tarefa 'fim' com ALL_DONE: o Airflow define o status do run
+    # pelas últimas tarefas, e uma 'fim' sempre verde escondia as falhas.
+    # Assim, em caso de erro, notificar_sucesso fica upstream_failed
+    # e o run aparece como failed.
 
     # ── Fluxo ────────────────────────────────────────────────
 
@@ -256,6 +304,3 @@ with DAG(
     # Notificações
     dbt_test >> notificar_ok
     dbt_test >> notificar_erro
-
-    # Fim sempre executa
-    [notificar_ok, notificar_erro] >> fim

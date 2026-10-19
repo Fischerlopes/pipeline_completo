@@ -10,6 +10,7 @@ x-airflow-common:
     GCP_PROJECT_DEV: ${GCP_PROJECT_DEV}
     GCP_PROJECT_PROD: ${GCP_PROJECT_PROD}
     GCP_CREDENTIALS: ${GCP_CREDENTIALS}
+    GCP_BUCKET_RAW: ${GCP_BUCKET_RAW}
     DBT_TARGET: ${DBT_TARGET}
   volumes:
     - ./dags:/opt/airflow/dags

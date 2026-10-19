@@ -51,7 +51,7 @@ flowchart LR
     ordens --> insumos
     entregas --> fretes & ocorrencias
     insumos & fretes & ocorrencias & linhas --> dados{{aguardar_dados}}
-    dados --> dbt_raw --> dbt_staging --> dbt_marts --> dbt_test
+    dados --> dbt_deps --> dbt_raw --> dbt_staging --> dbt_marts --> dbt_test
     dbt_test --> sucesso[notificar_sucesso] & falha[notificar_falha]
     sucesso & falha --> fim
 ```
@@ -144,7 +144,7 @@ flowchart LR
 
 ## Segurança
 
-Nenhuma credencial fica no código. O `profiles.yml` do dbt e o `docker-compose.yml` leem tudo de variáveis de ambiente (`env_var` / `${VAR}`), definidas em um `.env` local que não é versionado. A chave da service account do GCP fica em `secrets/`, montada como volume no container e também fora do Git.
+Nenhuma credencial ou configuração de ambiente fica no código. O `profiles.yml` e as sources do dbt, os geradores Python e o `docker-compose.yml` leem tudo de variáveis de ambiente (`env_var` / `${VAR}`), definidas em um `.env` local que não é versionado. A chave da service account do GCP fica em `secrets/`, montada como volume no container e também fora do Git.
 
 ---
 
@@ -165,21 +165,18 @@ mkdir secrets                      # colocar aqui o JSON da service account
 docker compose build
 docker compose up airflow-init
 docker compose up -d
-
-# 4. Instalar os pacotes do dbt (uma vez)
-docker compose exec airflow-scheduler bash -c \
-  "cd /opt/airflow/dbt/jornada_financeira && dbt deps"
 ```
+
+Os pacotes do dbt são instalados pela própria DAG (tarefa `dbt_deps`), nas versões travadas em `package-lock.yml`.
 
 Acesse o Airflow em **http://localhost:8080**, ative a DAG `neuro_pipeline_diario` e dispare uma execução.
 
-> Para usar outro projeto GCP, ajuste também o nome do projeto e do bucket em `dags/scripts/utils.py` e em `dbt/jornada_financeira/models/01_raw/sources.yml`.
+> Toda a configuração de ambiente vem do `.env`: os projetos GCP (`GCP_PROJECT_DEV` / `GCP_PROJECT_PROD`), o bucket (`GCP_BUCKET_RAW`) e o ambiente ativo (`DBT_TARGET`). Trocar de `dev` para `prod` é só mudar o `.env` — o dbt e os geradores passam a apontar juntos para o novo projeto.
 
 ---
 
 ## Próximos passos
 
-- Parametrizar projeto e bucket nos geradores e nas sources via variáveis de ambiente
 - Notificação de falha por e-mail/Slack
 - CI com GitHub Actions rodando `dbt build` a cada pull request
 - Dashboard no Looker Studio sobre os marts

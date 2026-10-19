@@ -1,11 +1,6 @@
-from google.cloud import storage
+from utils import get_cliente_gcs, BUCKET_NAME
 
-cliente = storage.Client.from_service_account_json(
-    'secrets/neuro-pipeline-dev.json',
-    project='neuro-pipeline-dev'
-)
-
-bucket = cliente.bucket('neuro-pipeline-dev-raw')
+bucket = get_cliente_gcs().bucket(BUCKET_NAME)
 blobs  = list(bucket.list_blobs())
 
 print(f'Total de arquivos no bucket: {len(blobs)}')

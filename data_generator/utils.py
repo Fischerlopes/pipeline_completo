@@ -12,11 +12,27 @@ from google.cloud import storage
 from datetime import datetime
 import os
 
-# ── Configurações globais ────────────────────────────────────
-GCP_PROJECT        = 'neuro-pipeline-dev'
-BUCKET_NAME        = 'neuro-pipeline-dev-raw'
-CAMINHO_CREDENCIAL = 'secrets/neuro-pipeline-dev.json'
+# Execução local: carrega o .env da raiz do projeto.
+# No container as variáveis já vêm do docker-compose.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# ── Configurações globais (lidas do ambiente) ────────────────
+# DBT_TARGET escolhe o ambiente (dev/prod) para o dbt e para os
+# geradores, assim os dois sempre apontam para o mesmo projeto.
+AMBIENTE           = os.getenv('DBT_TARGET', 'dev')
+GCP_PROJECT        = os.environ['GCP_PROJECT_PROD' if AMBIENTE == 'prod' else 'GCP_PROJECT_DEV']
+BUCKET_NAME        = os.environ['GCP_BUCKET_RAW']
 PASTA_TEMP         = os.path.join('data_generator', 'temp')
+
+# GCP_CREDENTIALS traz o caminho do container (/opt/airflow/secrets/...).
+# Fora do container, usa o mesmo arquivo na pasta secrets/ local.
+CAMINHO_CREDENCIAL = os.environ['GCP_CREDENTIALS']
+if not os.path.exists(CAMINHO_CREDENCIAL):
+    CAMINHO_CREDENCIAL = os.path.join('secrets', os.path.basename(CAMINHO_CREDENCIAL))
 
 
 # ── Funções compartilhadas ───────────────────────────────────

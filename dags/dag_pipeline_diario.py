@@ -153,6 +153,18 @@ with DAG(
     # ── Aguarda todos os dados antes do dbt ──────────────────
     aguardar_dados = EmptyOperator(task_id='aguardar_todos_os_dados')
 
+    # ── dbt: pacotes ─────────────────────────────────────────
+    # dbt_packages/ não vai para o Git: instala as versões do
+    # package-lock.yml, necessário num clone novo do projeto
+    dbt_deps = BashOperator(
+        task_id='dbt_deps',
+        bash_command=(
+            'cd /opt/airflow/dbt/jornada_financeira && '
+            'dbt deps '
+            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
+        ),
+    )
+
     # ── dbt: camada RAW ──────────────────────────────────────
     dbt_raw = BashOperator(
         task_id='dbt_raw',
@@ -239,7 +251,7 @@ with DAG(
         gerar_linhas,
     ] >> aguardar_dados
 
-    aguardar_dados >> dbt_raw >> dbt_staging >> dbt_marts >> dbt_test
+    aguardar_dados >> dbt_deps >> dbt_raw >> dbt_staging >> dbt_marts >> dbt_test
 
     # Notificações
     dbt_test >> notificar_ok

@@ -14,11 +14,8 @@
 # ============================================================
 
 import sys
-from google.cloud import storage
+from utils import get_cliente_gcs, BUCKET_NAME
 
-GCP_PROJECT        = 'neuro-pipeline-dev'
-BUCKET_NAME        = 'neuro-pipeline-dev-raw'
-CAMINHO_CREDENCIAL = 'secrets/neuro-pipeline-dev.json'
 PASTA_ARQUIVO      = 'arquivo_ids_antigos'
 
 # Pastas lidas pelo dbt (models/01_raw/sources.yml)
@@ -58,11 +55,7 @@ if __name__ == '__main__':
     print('RESTAURAÇÃO DO BUCKET' if restaurar else 'LIMPEZA DO BUCKET')
     print('=' * 50)
 
-    cliente = storage.Client.from_service_account_json(
-        CAMINHO_CREDENCIAL,
-        project=GCP_PROJECT
-    )
-    bucket = cliente.bucket(BUCKET_NAME)
+    bucket = get_cliente_gcs().bucket(BUCKET_NAME)
 
     movimentos = listar_movimentos(bucket, restaurar)
 

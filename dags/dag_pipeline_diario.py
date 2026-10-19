@@ -127,7 +127,7 @@ def notificar_falha(**context):
 with DAG(
     dag_id='neuro_pipeline_diario',
     description='Pipeline diário: geração de dados + dbt',
-    schedule_interval='0 6 * * *',  # Todo dia às 6h da manhã
+    schedule='0 6 * * *',  # Todo dia às 6h da manhã
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,

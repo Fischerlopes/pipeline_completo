@@ -1,5 +1,7 @@
 # Pipeline de Dados — Jornada Financeira
 
+[![CI](https://github.com/Fischerlopes/pipeline_completo/actions/workflows/ci.yml/badge.svg)](https://github.com/Fischerlopes/pipeline_completo/actions/workflows/ci.yml)
+
 Pipeline de dados ponta a ponta que simula a operação de uma indústria — **vendas, produção e logística** — e entrega, todo dia, duas tabelas analíticas prontas para BI: o **resultado financeiro por pedido** (receita, custos e margem) e a **performance logística por entrega** (SLA, frete e ocorrências).
 
 Orquestrado com **Apache Airflow**, transformado com **dbt** e armazenado no **Google Cloud (Cloud Storage + BigQuery)**, rodando em **Docker**.
@@ -108,6 +110,18 @@ flowchart LR
 
 ---
 
+## Integração contínua (CI)
+
+A cada push e pull request, o GitHub Actions valida o projeto em três jobs paralelos — sem acessar o GCP:
+
+| Job | O que valida |
+|---|---|
+| **dbt (parse)** | O projeto dbt compila: YAML, Jinja, `ref`s, sources e os 53 testes |
+| **Airflow (DAG)** | A DAG carrega sem erros e mantém a estrutura esperada (testes em `tests/` com pytest): geradores antes do dbt, ordem `deps → raw → staging → marts → test`, retries em todas as tarefas e nenhuma falha mascarada |
+| **Python (lint)** | Erros de sintaxe e nomes indefinidos nos scripts (ruff) |
+
+---
+
 ## Stack
 
 | Ferramenta | Uso |
@@ -119,6 +133,7 @@ flowchart LR
 | BigQuery | Data warehouse |
 | Python · Faker · pandas | Geração de dados sintéticos |
 | Docker Compose · PostgreSQL | Ambiente e metadados do Airflow |
+| GitHub Actions · pytest · ruff | Integração contínua |
 
 ---
 
@@ -136,6 +151,8 @@ flowchart LR
 │   │   └── 03_marts/              # fatos + schema.yml (testes)
 │   ├── tests/                     # testes de regra de negócio
 │   └── profiles.yml               # conexão via variáveis de ambiente
+├── tests/                         # testes da DAG (pytest)
+├── .github/workflows/ci.yml       # pipeline de CI
 ├── dockerfile                     # imagem do Airflow com dbt e dependências
 ├── docker-compose.yml
 └── .env.example                   # modelo de configuração
@@ -180,5 +197,5 @@ Acesse o Airflow em **http://localhost:8080**, ative a DAG `neuro_pipeline_diari
 
 ## Próximos passos
 
-- CI com GitHub Actions rodando `dbt build` a cada pull request
+- CI com `dbt build` em um dataset isolado do BigQuery a cada pull request
 - Dashboard no Looker Studio sobre os marts

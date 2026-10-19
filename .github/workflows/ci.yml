@@ -1,0 +1,93 @@
+# ============================================================
+# CI — validação automática a cada push e pull request
+# Neurometric — neuro-pipeline-dev
+# ============================================================
+# Roda sem credenciais do GCP: valida a estrutura do projeto
+# (dbt, DAG e Python) sem acessar o BigQuery.
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+
+  # ── dbt: projeto compila (YAML, Jinja, refs e testes) ──────
+  dbt:
+    name: dbt (parse)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt/jornada_financeira
+    env:
+      # Valores fictícios: o parse não conecta no BigQuery
+      DBT_TARGET: dev
+      GCP_PROJECT_DEV: ci-projeto
+      GCP_PROJECT_PROD: ci-projeto
+      GCP_BUCKET_RAW: ci-bucket
+      GCP_CREDENTIALS: /tmp/ci-sem-credencial.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dbt
+        run: pip install dbt-core==1.12.4 dbt-bigquery==1.12.0
+
+      - name: Instalar pacotes dbt
+        run: dbt deps --profiles-dir .
+
+      - name: Validar projeto
+        run: dbt parse --profiles-dir .
+
+      - name: Resumo
+        run: |
+          echo "Modelos: $(dbt ls --profiles-dir . --resource-type model -q | wc -l)"
+          echo "Testes:  $(dbt ls --profiles-dir . --resource-type test -q | wc -l)"
+
+  # ── Airflow: DAG carrega e tem a estrutura esperada ────────
+  airflow:
+    name: Airflow (DAG)
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_HOME: ${{ github.workspace }}/.airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar Airflow
+        run: |
+          pip install "apache-airflow==2.9.1" pytest \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.1/constraints-3.12.txt"
+
+      - name: Inicializar banco local do Airflow
+        run: airflow db migrate
+
+      - name: Testar DAG
+        run: pytest tests -v
+
+  # ── Python: erros de sintaxe e nomes indefinidos ───────────
+  python:
+    name: Python (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar ruff
+        run: pip install ruff
+
+      - name: Verificar código
+        run: ruff check --select E9,F63,F7,F82 dags data_generator tests

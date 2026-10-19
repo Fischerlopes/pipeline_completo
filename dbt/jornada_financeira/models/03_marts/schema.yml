@@ -1,0 +1,45 @@
+version: 2
+
+# ============================================================
+# TESTES DA CAMADA MARTS
+# A chave de cada fato precisa ser única: é ela que o MERGE
+# incremental usa. Se duplicar, o MERGE falha na próxima carga.
+# ============================================================
+
+models:
+
+  - name: fct_resultado_financeiro
+    description: "Resultado financeiro por pedido (vendas + produção + logística)"
+    columns:
+      - name: id_pedido
+        data_tests:
+          - unique
+          - not_null
+      - name: id_cliente
+        data_tests:
+          - not_null
+      - name: valor_liquido
+        data_tests:
+          - not_null
+      - name: sla_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['no_prazo', 'atrasado', 'devolvido', 'em_andamento']
+
+  - name: fct_logistica
+    description: "Logística por entrega (SLA, fretes, ocorrências)"
+    columns:
+      - name: id_entrega
+        data_tests:
+          - unique
+          - not_null
+      - name: id_pedido
+        data_tests:
+          - not_null
+      - name: sla_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['no_prazo', 'atrasado', 'devolvido', 'em_andamento']

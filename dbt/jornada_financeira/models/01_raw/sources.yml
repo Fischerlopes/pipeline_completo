@@ -1,0 +1,102 @@
+version: 2
+
+sources:
+
+  # ── VENDAS ──────────────────────────────────────────────
+  - name: bucket_vendas
+    database: neuro-pipeline-dev
+    schema: raw
+    description: "Dados brutos de vendas vindos do Cloud Storage"
+    tables:
+      - name: customers
+        description: "Clientes cadastrados"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/vendas/customers/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: products
+        description: "Produtos cadastrados"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/vendas/products/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: orders
+        description: "Pedidos de venda"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/vendas/orders/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+  # ── PRODUÇÃO ─────────────────────────────────────────────
+  - name: bucket_producao
+    database: neuro-pipeline-dev
+    schema: raw
+    description: "Dados brutos de produção vindos do Cloud Storage"
+    tables:
+      - name: order_prod
+        description: "Ordens de produção"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/producao/order_prod/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: production_inputs
+        description: "Insumos utilizados na produção"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/producao/production_inputs/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: production_lines
+        description: "Linhas e turnos de produção"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/producao/production_lines/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+  # ── LOGÍSTICA ────────────────────────────────────────────
+  - name: bucket_logistica
+    database: neuro-pipeline-dev
+    schema: raw
+    description: "Dados brutos de logística vindos do Cloud Storage"
+    tables:
+      - name: deliveries
+        description: "Entregas realizadas"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/logistica/deliveries/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: freight_costs
+        description: "Custos de frete por entrega"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/logistica/freight_costs/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","
+
+      - name: occurrences
+        description: "Ocorrências logísticas"
+        external:
+          location: "gs://neuro-pipeline-dev-raw/logistica/occurrences/*.csv"
+          options:
+            format: CSV
+            skip_leading_rows: 1
+            field_delimiter: ","

@@ -1,0 +1,31 @@
+name: 'jornada_financeira'
+version: '1.0.0'
+config-version: 2
+
+profile: 'jornada_financeira'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  jornada_financeira:
+
+    01_raw:
+      +materialized: table
+      
+    02_staging:
+      +materialized: incremental
+      +schema: staging
+
+    03_marts:
+      +materialized: incremental
+      +schema: marts

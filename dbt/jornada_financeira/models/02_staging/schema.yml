@@ -1,0 +1,197 @@
+version: 2
+
+# ============================================================
+# TESTES DA CAMADA STAGING
+# - unique + not_null nas chaves primárias
+# - relationships nas chaves estrangeiras
+# - accepted_values nos status: 'desconhecido' fica de FORA da
+#   lista de propósito. O CASE do staging joga qualquer valor
+#   inesperado para 'desconhecido', então este teste avisa
+#   quando a fonte começar a mandar um status novo.
+# ============================================================
+
+models:
+
+  # ── VENDAS ──────────────────────────────────────────────
+  - name: stg_customers
+    description: "Clientes limpos e deduplicados"
+    columns:
+      - name: id_cliente
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ativo', 'inativo', 'prospecto']
+              config:
+                severity: warn
+
+  - name: stg_products
+    description: "Produtos limpos e deduplicados"
+    columns:
+      - name: id_produto
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ativo', 'inativo', 'descontinuado']
+              config:
+                severity: warn
+
+  - name: stg_orders
+    description: "Pedidos de venda limpos e deduplicados"
+    columns:
+      - name: id_pedido
+        data_tests:
+          - unique
+          - not_null
+      - name: id_cliente
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: id_cliente
+      - name: id_produto
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: id_produto
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['rascunho', 'confirmado', 'em_producao', 'faturado', 'entregue', 'cancelado']
+              config:
+                severity: warn
+
+  # ── PRODUÇÃO ─────────────────────────────────────────────
+  - name: stg_order_prod
+    description: "Ordens de produção limpas e deduplicadas"
+    columns:
+      - name: id_ordem
+        data_tests:
+          - unique
+          - not_null
+      - name: id_pedido
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: id_pedido
+      - name: id_produto
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: id_produto
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['aguardando', 'em_producao', 'pausado', 'finalizado', 'cancelado']
+              config:
+                severity: warn
+
+  - name: stg_production_inputs
+    description: "Insumos de produção limpos e deduplicados"
+    columns:
+      - name: id_insumo
+        data_tests:
+          - unique
+          - not_null
+      - name: id_ordem
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_order_prod')
+                field: id_ordem
+
+  - name: stg_production_lines
+    description: "Linhas e turnos de produção"
+    columns:
+      - name: id_linha_turno
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ativa', 'manutencao', 'inativa']
+              config:
+                severity: warn
+
+  # ── LOGÍSTICA ────────────────────────────────────────────
+  - name: stg_deliveries
+    description: "Entregas limpas e deduplicadas"
+    columns:
+      - name: id_entrega
+        data_tests:
+          - unique
+          - not_null
+      - name: id_pedido
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: id_pedido
+      - name: id_cliente
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: id_cliente
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['aguardando_coleta', 'coletado', 'em_transito', 'saiu_para_entrega', 'entregue', 'tentativa_falha', 'devolvido']
+              config:
+                severity: warn
+
+  - name: stg_freight_costs
+    description: "Custos de frete limpos e deduplicados"
+    columns:
+      - name: id_frete
+        data_tests:
+          - unique
+          - not_null
+      - name: id_entrega
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_deliveries')
+                field: id_entrega
+
+  - name: stg_occurrences
+    description: "Ocorrências logísticas limpas e deduplicadas"
+    columns:
+      - name: id_ocorrencia
+        data_tests:
+          - unique
+          - not_null
+      - name: id_entrega
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_deliveries')
+                field: id_entrega
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['aberta', 'em_analise', 'resolvida', 'encerrada']
+              config:
+                severity: warn

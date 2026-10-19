@@ -57,6 +57,13 @@ jobs:
     env:
       AIRFLOW_HOME: ${{ github.workspace }}/.airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      # O Cosmos roda `dbt ls` ao carregar a DAG: valores fictícios
+      # bastam, o dbt ls não conecta no BigQuery
+      DBT_TARGET: dev
+      GCP_PROJECT_DEV: ci-projeto
+      GCP_PROJECT_PROD: ci-projeto
+      GCP_BUCKET_RAW: ci-bucket
+      GCP_CREDENTIALS: /tmp/ci-sem-credencial.json
     steps:
       - uses: actions/checkout@v4
 
@@ -68,6 +75,14 @@ jobs:
         run: |
           pip install "apache-airflow==2.9.1" pytest \
             --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.1/constraints-3.12.txt"
+
+      # Mesmas versões do dockerfile
+      - name: Instalar Cosmos e dbt
+        run: pip install astronomer-cosmos==1.10.1 dbt-core==1.12.4 dbt-bigquery==1.12.0
+
+      - name: Instalar pacotes dbt
+        working-directory: dbt/jornada_financeira
+        run: dbt deps --profiles-dir .
 
       - name: Inicializar banco local do Airflow
         run: airflow db migrate

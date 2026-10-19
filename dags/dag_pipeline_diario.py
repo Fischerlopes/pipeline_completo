@@ -5,7 +5,8 @@
 # Executa todo dia automaticamente:
 #   1. Gera dados novos com Python
 #   2. Envia para o bucket GCP
-#   3. Executa o dbt (raw → staging → marts)
+#   3. Executa o dbt com Cosmos: uma tarefa por modelo
+#      (run + testes), seguindo a linhagem do dbt
 #   4. Em caso de falha, envia alerta por e-mail
 # ============================================================
 
@@ -13,8 +14,11 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.email import send_email
+from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
+from cosmos.constants import LoadMode, TestBehavior
 from datetime import datetime, timedelta
 import subprocess
 import sys
@@ -22,8 +26,12 @@ import os
 
 # ── Configurações ────────────────────────────────────────────
 
-DBT_PROJECT_DIR = '/opt/airflow/dbt/jornada_financeira'
-DBT_PROFILES_DIR = '/opt/airflow/dbt/jornada_financeira'
+# Caminho relativo à DAG: funciona no container (/opt/airflow/dbt/...)
+# e no CI do GitHub, onde o repositório fica em outra pasta
+DBT_PROJECT_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', 'dbt', 'jornada_financeira')
+)
+DBT_PROFILES_DIR = DBT_PROJECT_DIR
 SCRIPTS_DIR = '/opt/airflow/dags/scripts'
 
 # Destinatário do alerta de falha (vazio = alerta só no log)
@@ -124,133 +132,100 @@ def notificar_falha(**context):
 
 # ── DAG ──────────────────────────────────────────────────────
 
+def gerador(nome):
+    """Tarefa que roda o script dags/scripts/<nome>.py"""
+    return PythonOperator(
+        task_id=nome,
+        python_callable=rodar_script,
+        op_args=[f'{nome}.py'],
+    )
+
+
 with DAG(
     dag_id='neuro_pipeline_diario',
-    description='Pipeline diário: geração de dados + dbt',
+    description='Pipeline diário: geração de dados + dbt (Cosmos)',
     schedule='0 6 * * *',  # Todo dia às 6h da manhã
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
+    max_active_tasks=8,  # limita processos dbt simultâneos no container
     tags=['neurometric', 'pipeline', 'diario'],
 ) as dag:
 
     # ── Início ───────────────────────────────────────────────
     inicio = EmptyOperator(task_id='inicio')
 
-    # ── Geração de dados (em paralelo) ───────────────────────
-    gerar_clientes = PythonOperator(
-        task_id='gerar_clientes',
-        python_callable=rodar_script,
-        op_args=['gerar_clientes.py'],
-    )
+    # ── Geração de dados, agrupada por domínio ───────────────
+    with TaskGroup('vendas') as vendas:
+        gerar_clientes = gerador('gerar_clientes')
+        gerar_produtos = gerador('gerar_produtos')
+        gerar_pedidos  = gerador('gerar_pedidos')
 
-    gerar_produtos = PythonOperator(
-        task_id='gerar_produtos',
-        python_callable=rodar_script,
-        op_args=['gerar_produtos.py'],
-    )
+        # Pedidos apontam para clientes e produtos existentes
+        [gerar_clientes, gerar_produtos] >> gerar_pedidos
 
-    # ── Aguarda clientes e produtos antes dos dependentes ────
-    aguardar_base = EmptyOperator(task_id='aguardar_base')
+    with TaskGroup('producao') as producao:
+        gerar_linhas         = gerador('gerar_linhas_producao')
+        gerar_ordem_producao = gerador('gerar_ordem_producao')
+        gerar_insumos        = gerador('gerar_insumos')
 
-    gerar_pedidos = PythonOperator(
-        task_id='gerar_pedidos',
-        python_callable=rodar_script,
-        op_args=['gerar_pedidos.py'],
-    )
+        gerar_ordem_producao >> gerar_insumos
 
-    gerar_ordem_producao = PythonOperator(
-        task_id='gerar_ordem_producao',
-        python_callable=rodar_script,
-        op_args=['gerar_ordem_producao.py'],
-    )
+    with TaskGroup('logistica') as logistica:
+        gerar_entregas    = gerador('gerar_entregas')
+        gerar_fretes      = gerador('gerar_fretes')
+        gerar_ocorrencias = gerador('gerar_ocorrencias')
 
-    gerar_entregas = PythonOperator(
-        task_id='gerar_entregas',
-        python_callable=rodar_script,
-        op_args=['gerar_entregas.py'],
-    )
+        gerar_entregas >> [gerar_fretes, gerar_ocorrencias]
 
-    # ── Aguarda pedidos antes dos dependentes ────────────────
-    aguardar_pedidos = EmptyOperator(task_id='aguardar_pedidos')
+    # ── dbt: preparação ──────────────────────────────────────
+    with TaskGroup('preparacao_dbt') as preparacao_dbt:
+        # dbt_packages/ não vai para o Git: instala uma vez por execução
+        # as versões do package-lock.yml (as tarefas do Cosmos reutilizam)
+        dbt_deps = BashOperator(
+            task_id='dbt_deps',
+            bash_command=(
+                f'cd {DBT_PROJECT_DIR} && '
+                f'dbt deps --profiles-dir {DBT_PROFILES_DIR}'
+            ),
+        )
 
-    gerar_fretes = PythonOperator(
-        task_id='gerar_fretes',
-        python_callable=rodar_script,
-        op_args=['gerar_fretes.py'],
-    )
+        # Registra os CSVs do bucket como tabelas externas no BigQuery
+        stage_external_sources = BashOperator(
+            task_id='stage_external_sources',
+            bash_command=(
+                f'cd {DBT_PROJECT_DIR} && '
+                f'dbt run-operation stage_external_sources --profiles-dir {DBT_PROFILES_DIR}'
+            ),
+        )
 
-    gerar_insumos = PythonOperator(
-        task_id='gerar_insumos',
-        python_callable=rodar_script,
-        op_args=['gerar_insumos.py'],
-    )
+        dbt_deps >> stage_external_sources
 
-    gerar_linhas = PythonOperator(
-        task_id='gerar_linhas_producao',
-        python_callable=rodar_script,
-        op_args=['gerar_linhas_producao.py'],
-    )
-
-    gerar_ocorrencias = PythonOperator(
-        task_id='gerar_ocorrencias',
-        python_callable=rodar_script,
-        op_args=['gerar_ocorrencias.py'],
-    )
-
-    # ── Aguarda todos os dados antes do dbt ──────────────────
-    aguardar_dados = EmptyOperator(task_id='aguardar_todos_os_dados')
-
-    # ── dbt: pacotes ─────────────────────────────────────────
-    # dbt_packages/ não vai para o Git: instala as versões do
-    # package-lock.yml, necessário num clone novo do projeto
-    dbt_deps = BashOperator(
-        task_id='dbt_deps',
-        bash_command=(
-            'cd /opt/airflow/dbt/jornada_financeira && '
-            'dbt deps '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
+    # ── dbt: transformação com Cosmos ────────────────────────
+    # Cada modelo vira um grupo com run + testes. A ordem segue a
+    # linhagem do dbt (ref), então stg_customers pode rodar assim
+    # que raw_customers termina, sem esperar a camada inteira.
+    # Uma falha afeta só o modelo e o que depende dele.
+    transformacao_dbt = DbtTaskGroup(
+        group_id='transformacao_dbt',
+        project_config=ProjectConfig(
+            DBT_PROJECT_DIR,
+            install_dbt_deps=False,  # já instalado por dbt_deps
+        ),
+        profile_config=ProfileConfig(
+            profile_name='jornada_financeira',
+            target_name=os.getenv('DBT_TARGET', 'dev'),
+            profiles_yml_filepath=f'{DBT_PROFILES_DIR}/profiles.yml',
+        ),
+        render_config=RenderConfig(
+            load_method=LoadMode.DBT_LS,
+            test_behavior=TestBehavior.AFTER_EACH,
+            # Testes que olham dois modelos (ex.: relationships) viram
+            # tarefa própria e só rodam depois dos dois
+            should_detach_multiple_parents_tests=True,
         ),
     )
 
-    # ── dbt: camada RAW ──────────────────────────────────────
-    dbt_raw = BashOperator(
-        task_id='dbt_raw',
-        bash_command=(
-            'cd /opt/airflow/dbt/jornada_financeira && '
-            'dbt run-operation stage_external_sources '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira && '
-            'dbt run --select 01_raw '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
-        ),
-    )
-
-    dbt_staging = BashOperator(
-        task_id='dbt_staging',
-        bash_command=(
-            'cd /opt/airflow/dbt/jornada_financeira && '
-            'dbt run --select 02_staging '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
-        ),
-    )
-
-    dbt_marts = BashOperator(
-        task_id='dbt_marts',
-        bash_command=(
-            'cd /opt/airflow/dbt/jornada_financeira && '
-            'dbt run --select 03_marts '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
-        ),
-    )
-
-    dbt_test = BashOperator(
-        task_id='dbt_test',
-        bash_command=(
-            'cd /opt/airflow/dbt/jornada_financeira && '
-            'dbt test '
-            '--profiles-dir /opt/airflow/dbt/jornada_financeira'
-        ),
-    )
     # ── Notificações ─────────────────────────────────────────
     notificar_ok = PythonOperator(
         task_id='notificar_sucesso',
@@ -270,37 +245,16 @@ with DAG(
 
     # ── Fluxo ────────────────────────────────────────────────
 
-    # Início → geração base em paralelo
-    inicio >> [gerar_clientes, gerar_produtos]
+    # Início → os três domínios (cada tarefa ainda espera suas
+    # dependências: linhas de produção não dependem de nada e
+    # começam já, em paralelo com clientes e produtos)
+    inicio >> [vendas, producao, logistica]
 
-    # Base pronta → aguardar sincronização
-    [gerar_clientes, gerar_produtos] >> aguardar_base
+    # Ordens de produção e entregas nascem dos pedidos
+    gerar_pedidos >> [gerar_ordem_producao, gerar_entregas]
 
-    # Base → dependentes em paralelo
-    aguardar_base >> [gerar_pedidos, gerar_linhas]
-
-    # Pedidos prontos → aguardar
-    gerar_pedidos >> aguardar_pedidos
-
-    # Pedidos → dependentes em paralelo
-    aguardar_pedidos >> [gerar_ordem_producao, gerar_entregas]
-
-    # Ordens → insumos
-    gerar_ordem_producao >> gerar_insumos
-
-    # Entregas → fretes e ocorrências
-    gerar_entregas >> [gerar_fretes, gerar_ocorrencias]
-
-    # Todos os dados prontos → dbt em sequência
-    [
-        gerar_insumos,
-        gerar_fretes,
-        gerar_ocorrencias,
-        gerar_linhas,
-    ] >> aguardar_dados
-
-    aguardar_dados >> dbt_deps >> dbt_raw >> dbt_staging >> dbt_marts >> dbt_test
+    # Todos os dados prontos → dbt
+    [vendas, producao, logistica] >> preparacao_dbt >> transformacao_dbt
 
     # Notificações
-    dbt_test >> notificar_ok
-    dbt_test >> notificar_erro
+    transformacao_dbt >> [notificar_ok, notificar_erro]

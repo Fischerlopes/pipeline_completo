@@ -14,7 +14,7 @@ Orquestrado com **Apache Airflow**, transformado com **dbt** e armazenado no **G
 flowchart LR
     subgraph Airflow["Apache Airflow (Docker)"]
         G["9 geradores Python<br/>(Faker)"]
-        D["dbt<br/>raw → staging → marts → test"]
+        D["dbt via Cosmos<br/>1 tarefa por modelo"]
     end
 
     G -- "CSV diário" --> GCS[("Cloud Storage<br/>bucket raw")]
@@ -41,21 +41,42 @@ flowchart LR
 
 ## Orquestração (DAG)
 
-A DAG `neuro_pipeline_diario` paraleliza a geração onde é possível e sincroniza onde há dependência:
+A DAG `neuro_pipeline_diario` organiza a geração em **TaskGroups por domínio** e executa o dbt com o **[Astronomer Cosmos](https://github.com/astronomer/astronomer-cosmos)**, que transforma cada modelo dbt em tarefas próprias do Airflow:
 
 ```mermaid
 flowchart LR
-    inicio --> clientes & produtos
-    clientes & produtos --> base{{aguardar_base}}
-    base --> pedidos & linhas[linhas_producao]
-    pedidos --> ped{{aguardar_pedidos}}
-    ped --> ordens[ordem_producao] & entregas
-    ordens --> insumos
-    entregas --> fretes & ocorrencias
-    insumos & fretes & ocorrencias & linhas --> dados{{aguardar_dados}}
-    dados --> dbt_deps --> dbt_raw --> dbt_staging --> dbt_marts --> dbt_test
-    dbt_test --> sucesso[notificar_sucesso] & falha[notificar_falha]
+    subgraph vendas
+        clientes & produtos --> pedidos
+    end
+    subgraph producao
+        linhas[linhas_producao]
+        ordens[ordem_producao] --> insumos
+    end
+    subgraph logistica
+        entregas --> fretes & ocorrencias
+    end
+    subgraph prep[preparacao_dbt]
+        deps[dbt_deps] --> ext[stage_external_sources]
+    end
+    subgraph dbt[transformacao_dbt — Cosmos]
+        raw[raw_* run] --> stg[stg_* run + test] --> rel[testes entre modelos] --> fct[fct_* run + test]
+    end
+
+    inicio --> vendas & producao & logistica
+    pedidos --> ordens & entregas
+    vendas & producao & logistica --> prep
+    prep --> dbt
+    dbt --> sucesso[notificar_sucesso] & falha[notificar_falha]
 ```
+
+**Por que Cosmos:** com o dbt rodando por camada (`dbt run --select staging`), um modelo com erro derruba os outros oito e todos rodam de novo no retry. Com o Cosmos:
+
+- **cada modelo tem sua tarefa** de `run` e de `test` — o log mostra exatamente qual modelo quebrou e o retry é só dele;
+- **a ordem segue a linhagem do dbt** (`ref`), não a camada: `stg_customers` começa assim que `raw_customers` termina, sem esperar os outros raws;
+- **uma falha isola só o que depende dela** — um problema em `stg_freight_costs` não impede `stg_customers` de seguir;
+- testes que cruzam dois modelos (`relationships`) viram tarefas separadas e só rodam depois dos dois.
+
+Resultado: 55 tarefas, sendo 41 do dbt, com no máximo 8 em paralelo para não sobrecarregar o container.
 
 - **Retries:** 2 tentativas com intervalo de 5 minutos por tarefa.
 - **Alerta de falha por e-mail:** se qualquer etapa falhar, a tarefa `notificar_falha` envia um único e-mail por execução com a tarefa que quebrou, o número de tentativas, o link direto para o log e as etapas que deixaram de rodar por causa dela.
@@ -117,7 +138,7 @@ A cada push e pull request, o GitHub Actions valida o projeto em três jobs para
 | Job | O que valida |
 |---|---|
 | **dbt (parse)** | O projeto dbt compila: YAML, Jinja, `ref`s, sources e os 53 testes |
-| **Airflow (DAG)** | A DAG carrega sem erros e mantém a estrutura esperada (testes em `tests/` com pytest): geradores antes do dbt, ordem `deps → raw → staging → marts → test`, retries em todas as tarefas e nenhuma falha mascarada |
+| **Airflow (DAG)** | A DAG carrega sem erros e mantém a estrutura esperada (testes em `tests/` com pytest): geradores agrupados por domínio e antes do dbt, cada modelo dbt com sua tarefa no Cosmos, linhagem raw → staging respeitada, retries em todas as tarefas e nenhuma falha mascarada |
 | **Python (lint)** | Erros de sintaxe e nomes indefinidos nos scripts (ruff) |
 
 ---
@@ -128,6 +149,7 @@ A cada push e pull request, o GitHub Actions valida o projeto em três jobs para
 |---|---|
 | Apache Airflow 2.9 | Orquestração |
 | dbt-core 1.12 + dbt-bigquery | Transformação e testes |
+| Astronomer Cosmos | dbt dentro do Airflow, uma tarefa por modelo |
 | dbt_external_tables | Leitura dos CSVs do Cloud Storage |
 | Google Cloud Storage | Data lake (camada bruta) |
 | BigQuery | Data warehouse |
